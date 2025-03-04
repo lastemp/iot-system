@@ -1,13 +1,13 @@
 # iot-system
 
-This is an IOT system that comprises of two sub systems as shown below;
+This is an IOT system that comprises of two sub systems as indicated below;
 
 ## edge-client
 This is the client deployed on the edge that connects to mqtt broker and subscribes on the given topics.
 On receiving the mqtt messages from the broker, it queues the messages for a given duration before posting them to the cloud api url.
 
 ## cloud-restful-api
-This is a RESTful Actix Web API that connects to MySQL database. It receives posted messages from edge-client and then inserts them to database.
+This is a RESTful Gin Web API that connects to MySQL database. It receives posted messages from edge-client and then inserts them to database.
 
 Currently this RESTful API supports: 
 - Register messages
@@ -24,7 +24,7 @@ $ pwd
 .../iot-system
 ```
 
-1. Create database, tables and stored-procedures:
+1. Create database and tables:
 
    The `sql` directory contains the SQL files used for database setup:
    
