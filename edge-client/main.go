@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +24,23 @@ var (
 	mqttMessages []mqttMessage // Buffer to store messages
 )
 
-func startMqtt(broker, clientId, topic, batchMessageApiUrl string) {
+func startMqttClient(broker, clientId, topic, batchMessageApiUrl string) {
+
+	if strings.TrimSpace(broker) == "" {
+		log.Fatal("Error: broker is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(clientId) == "" {
+		log.Fatal("Error: client id is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(topic) == "" {
+		log.Fatal("Error: topic is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(batchMessageApiUrl) == "" {
+		log.Fatal("Error: batch message api url is empty or contains only spaces")
+	}
 
 	// Get the MQTT client
 	client := getMqttClient(broker, clientId)
@@ -34,25 +50,26 @@ func startMqtt(broker, clientId, topic, batchMessageApiUrl string) {
 
 	// Channel to signal sending
 	//ticker := time.NewTicker(5 * time.Minute) // Send data every 5 minutes
-	ticker := time.NewTicker(5 * time.Second) // Send data every 5 seconds
+	ticker := time.NewTicker(15 * time.Second) // Send data every 15 seconds
 	defer ticker.Stop()
 
 	go func() {
 		for range ticker.C {
-			sendJSONBatchRequest(batchMessageApiUrl) // Send data every 5 mins
+			sendJsonBatchRequest(batchMessageApiUrl) // Send data periodically
 		}
 	}()
 
 	msgRcvd := mqtt.MessageHandler(func(client mqtt.Client, message mqtt.Message) {
 		mu.Lock()
 		defer mu.Unlock()
-		fmt.Printf("Received message on topic: %s\nMessage: %s\n", message.Topic(), message.Payload())
+		//fmt.Printf("Received message on topic: %s\nMessage: %s\n", message.Topic(), message.Payload())
+		log.Printf("Received message on topic: %s\nMessage: %s\n", message.Topic(), message.Payload())
 		msg := mqttMessage{Topic: message.Topic(), Payload: string(message.Payload())}
 		mqttMessages = append(mqttMessages, msg)
 	})
 
 	if token := client.Subscribe(topic, 0, msgRcvd); token.Wait() && token.Error() != nil {
-		fmt.Println(token.Error())
+		log.Println(token.Error())
 	}
 
 	// Keep the program running to receive messages
@@ -61,57 +78,46 @@ func startMqtt(broker, clientId, topic, batchMessageApiUrl string) {
 }
 
 // Function to send a JSON HTTP request
-func sendJSONRequest(data mqttMessage) {
+func sendJsonBatchRequest(batchMessageApiUrl string) {
 
-	// Convert struct to JSON
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		fmt.Println("Error marshaling JSON:", err)
-		return
+	if strings.TrimSpace(batchMessageApiUrl) == "" {
+		log.Fatal("Error: batch message api url is empty or contains only spaces")
 	}
 
-	// Send HTTP POST request
-	resp, err := http.Post("http://localhost:8080/message", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Println("Error sending request:", err)
+	if len(mqttMessages) == 0 {
 		return
 	}
-	defer resp.Body.Close()
-
-	fmt.Println("Response Status:", resp.Status)
-}
-
-// Function to send a JSON HTTP request
-func sendJSONBatchRequest(batchMessageApiUrl string) {
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if len(mqttMessages) == 0 {
-		//fmt.Println("No new messages to send.")
-		return
-	}
-
 	// Convert struct to JSON
 	jsonData, err := json.Marshal(mqttMessages)
 	if err != nil {
-		fmt.Println("Error marshaling JSON:", err)
+		log.Println("Error marshaling JSON:", err)
 		return
 	}
 
 	// Send HTTP POST request
-	//resp, err := http.Post("http://localhost:8080/batchmessage", "application/json", bytes.NewBuffer(jsonData))
 	resp, err := http.Post(batchMessageApiUrl, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		fmt.Println("Error sending request:", err)
+		log.Println("Error sending request:", err)
 		return
 	}
 	defer resp.Body.Close()
 	mqttMessages = nil
-	fmt.Println("Response Status:", resp.Status)
+	log.Println("Response Status:", resp.Status)
 }
 
 func getMqttClient(broker, clientId string) mqtt.Client {
+
+	if strings.TrimSpace(broker) == "" {
+		log.Fatal("Error: broker is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(clientId) == "" {
+		log.Fatal("Error: client id is empty or contains only spaces")
+	}
 
 	// Configure persistent client options
 	opts := mqtt.NewClientOptions().
@@ -123,16 +129,17 @@ func getMqttClient(broker, clientId string) mqtt.Client {
 		SetConnectRetry(true).  // Retry connection if it fails
 		SetConnectRetryInterval(5 * time.Second).
 		SetOnConnectHandler(func(c mqtt.Client) {
-			fmt.Println("Connected to MQTT Broker")
+			log.Println("Connected to MQTT Broker")
 		}).
 		SetConnectionLostHandler(func(c mqtt.Client, err error) {
-			fmt.Println("Lost connection to MQTT Broker:", err)
+			log.Println("Lost connection to MQTT Broker:", err)
 		})
 
 	return mqtt.NewClient(opts)
 }
 
-func main() {
+func getEnvironmentVariables() (string, string, string, string) {
+	// get env vars
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -143,26 +150,49 @@ func main() {
 	if !exists {
 		log.Fatal("Error: MQTT_BROKER_ADDR environment variable is not set")
 	}
+	if strings.TrimSpace(broker) == "" {
+		log.Fatal("Error: MQTT_BROKER_ADDR is empty or contains only spaces")
+	}
+	broker = strings.TrimSpace(broker)
 
 	// MQTT client id
 	clientId, exists := os.LookupEnv("CLIENT_ID")
 	if !exists {
 		log.Fatal("Error: CLIENT_ID environment variable is not set")
 	}
+	if strings.TrimSpace(clientId) == "" {
+		log.Fatal("Error: CLIENT_ID is empty or contains only spaces")
+	}
+	clientId = strings.TrimSpace(clientId)
 
 	// MQTT message topic
 	topic, exists := os.LookupEnv("TOPIC")
 	if !exists {
 		log.Fatal("Error: TOPIC environment variable is not set")
 	}
+	if strings.TrimSpace(topic) == "" {
+		log.Fatal("Error: TOPIC is empty or contains only spaces")
+	}
+	topic = strings.TrimSpace(topic)
 
 	// cloud api url for batch message
 	batchMessageApiUrl, exists := os.LookupEnv("BATCHMESSAGE_API_URL")
 	if !exists {
 		log.Fatal("Error: BATCHMESSAGE_API_URL environment variable is not set")
 	}
+	if strings.TrimSpace(batchMessageApiUrl) == "" {
+		log.Fatal("Error: BATCHMESSAGE_API_URL is empty or contains only spaces")
+	}
+	batchMessageApiUrl = strings.TrimSpace(batchMessageApiUrl)
+
+	return broker, clientId, topic, batchMessageApiUrl
+}
+
+func main() {
+	// get env vars
+	broker, clientId, topic, batchMessageApiUrl := getEnvironmentVariables()
 
 	msg := "starting Mqtt client!"
-	fmt.Println(msg)
-	startMqtt(broker, clientId, topic, batchMessageApiUrl)
+	log.Println(msg)
+	startMqttClient(broker, clientId, topic, batchMessageApiUrl)
 }
