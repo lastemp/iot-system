@@ -48,9 +48,11 @@ func postMqttBatchMessage(c *gin.Context, db *sql.DB) {
 		return
 	}
 
-	// Save the new mqtt Message.
 	log.Println("new message:", msgs)
-	go addMessages(msgs, db)
+	if len(msgs) > 0 {
+		// Save the new mqtt messages.
+		go addMessages(msgs, db)
+	}
 	c.IndentedJSON(http.StatusCreated, "")
 }
 
@@ -62,6 +64,10 @@ func postMqttBatchMessageHandler(db *sql.DB) gin.HandlerFunc {
 
 // addMessages adds the specified messages to the database
 func addMessages(msgs []mqttMessage, db *sql.DB) {
+
+	if len(msgs) == 0 {
+		return
+	}
 
 	// Prepare an INSERT statement
 	stmt, err := db.Prepare("insert into iot_messages (topic, payload) values (?, ?)")
@@ -181,38 +187,6 @@ func getEnvironmentVariables() (string, string, string, string, string) {
 }
 
 func main() {
-	/*
-		// get env vars
-		err := godotenv.Load()
-		if err != nil {
-			log.Fatal("Error loading .env file")
-		}
-
-		serverAddr, exists := os.LookupEnv("SERVER_ADDR")
-		if !exists {
-			log.Fatal("Error: SERVER_ADDR environment variable is not set")
-		}
-
-		dbUser, exists := os.LookupEnv("DB_USER")
-		if !exists {
-			log.Fatal("Error: DB_USER environment variable is not set")
-		}
-
-		dbPass, exists := os.LookupEnv("DB_PASSWORD")
-		if !exists {
-			log.Fatal("Error: DB_PASSWORD environment variable is not set")
-		}
-
-		dbHost, exists := os.LookupEnv("DB_HOST_PORT")
-		if !exists {
-			log.Fatal("Error: DB_HOST_PORT environment variable is not set")
-		}
-
-		dbName, exists := os.LookupEnv("DB_NAME")
-		if !exists {
-			log.Fatal("Error: DB_NAME environment variable is not set")
-		}
-	*/
 
 	serverAddr, dbUser, dbPass, dbHost, dbName := getEnvironmentVariables()
 
