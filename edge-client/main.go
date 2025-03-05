@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -24,6 +27,7 @@ var (
 	mqttMessages []mqttMessage // Buffer to store messages
 )
 
+/*
 func startMqttClient(broker, clientId, topic, batchMessageApiUrl string) {
 
 	if strings.TrimSpace(broker) == "" {
@@ -75,6 +79,62 @@ func startMqttClient(broker, clientId, topic, batchMessageApiUrl string) {
 	// Keep the program running to receive messages
 	for {
 	}
+}
+*/
+
+func startMqttClient(broker, clientId, topic, batchMessageApiUrl string, client mqtt.Client, ticker *time.Ticker, stopCh chan struct{}) error {
+
+	if strings.TrimSpace(broker) == "" {
+		return errors.New("Error: broker is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(clientId) == "" {
+		return errors.New("Error: client id is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(topic) == "" {
+		return errors.New("Error: topic is empty or contains only spaces")
+	}
+
+	if strings.TrimSpace(batchMessageApiUrl) == "" {
+		return errors.New("Error: batch message api url is empty or contains only spaces")
+	}
+
+	// Connect the client
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return token.Error()
+	}
+
+	// Process received mqtt message
+	msgRcvd := mqtt.MessageHandler(func(client mqtt.Client, message mqtt.Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		log.Printf("Received message on topic: %s\nMessage: %s\n", message.Topic(), message.Payload())
+		msg := mqttMessage{Topic: message.Topic(), Payload: string(message.Payload())}
+		mqttMessages = append(mqttMessages, msg)
+	})
+
+	// Subscribe to the topic
+	if token := client.Subscribe(topic, 0, msgRcvd); token.Wait() && token.Error() != nil {
+		return token.Error()
+	}
+
+	// Goroutine to send periodic messages
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				sendJsonBatchRequest(batchMessageApiUrl)
+			case <-stopCh: // Stop signal received
+				log.Println("Stopping MQTT client...")
+				ticker.Stop()
+				client.Disconnect(250) // Gracefully disconnect MQTT client
+				return
+			}
+		}
+	}()
+
+	return nil
 }
 
 // Function to send a JSON HTTP request
@@ -192,7 +252,38 @@ func main() {
 	// get env vars
 	broker, clientId, topic, batchMessageApiUrl := getEnvironmentVariables()
 
+	// Initialize MQTT client
+	client := getMqttClient(broker, clientId)
+
+	// Create a ticker for periodic execution
+	//ticker := time.NewTicker(5 * time.Minute) // Send data every 5 minutes
+	ticker := time.NewTicker(15 * time.Second) // Send data every 15 seconds
+	defer ticker.Stop()
+
+	// Stop channel to signal shutdown
+	stopCh := make(chan struct{})
+
+	//startMqttClient(broker, clientId, topic, batchMessageApiUrl)
+
 	msg := "starting Mqtt client!"
 	log.Println(msg)
-	startMqttClient(broker, clientId, topic, batchMessageApiUrl)
+
+	// Start the MQTT client in a goroutine
+	go func() {
+		err := startMqttClient(broker, clientId, topic, batchMessageApiUrl, client, ticker, stopCh)
+		if err != nil {
+			log.Fatalf("Error starting MQTT client: %v", err)
+		}
+	}()
+
+	// Handle OS interrupt signals (CTRL+C)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for termination signal
+	<-sigCh
+	log.Println("Shutdown signal received")
+	close(stopCh)               // Notify startMqttClient to stop
+	time.Sleep(1 * time.Second) // Give some time to clean up
+	log.Println("Application exiting")
 }
