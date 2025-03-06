@@ -62,32 +62,6 @@ func (m *mockMqttClient) OptionsReader() mqtt.ClientOptionsReader {
 	return mqtt.ClientOptionsReader{}
 }
 
-/*
-func TestStartMqttClient(t *testing.T) {
-	mockClient := &mockMqttClient{} // ✅ Now valid as mqtt.Client
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-
-	// Call function under test
-	err := startMqttClient("tcp://localhost:1883", "testClient", "test/topic", "http://localhost/api", mockClient, ticker, stopCh)
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
-
-	// Simulate a stop signal
-	stopCh <- struct{}{}
-
-	// Allow some time for graceful shutdown
-	time.Sleep(500 * time.Millisecond)
-
-	t.Log("Test completed successfully")
-}
-*/
-
 // ✅ Test cases
 func TestStartMqttClient(t *testing.T) {
 	tests := []struct {
