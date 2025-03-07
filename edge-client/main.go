@@ -70,7 +70,11 @@ func startMqttClient(broker, clientId, topic, batchMessageApiUrl string, client 
 		for {
 			select {
 			case <-ticker.C:
-				sendJsonBatchRequest(batchMessageApiUrl)
+				err := sendJsonBatchRequest(batchMessageApiUrl)
+				if err != nil {
+					log.Println("Failed to send json batch request:", err)
+					// Don't return; continue trying on the next tick
+				}
 			case <-stopCh: // Stop signal received
 				log.Println("Stopping MQTT client...")
 				ticker.Stop()
@@ -84,14 +88,14 @@ func startMqttClient(broker, clientId, topic, batchMessageApiUrl string, client 
 }
 
 // Function to send a JSON HTTP request
-func sendJsonBatchRequest(batchMessageApiUrl string) {
+func sendJsonBatchRequest(batchMessageApiUrl string) error {
 
 	if strings.TrimSpace(batchMessageApiUrl) == "" {
-		log.Fatal("Error: batch message api url is empty or contains only spaces")
+		return errors.New("Error: batch message api url is empty or contains only spaces")
 	}
 
 	if len(mqttMessages) == 0 {
-		return
+		return nil // No messages to send, not an error
 	}
 
 	mu.Lock()
@@ -100,19 +104,20 @@ func sendJsonBatchRequest(batchMessageApiUrl string) {
 	// Convert struct to JSON
 	jsonData, err := json.Marshal(mqttMessages)
 	if err != nil {
-		log.Println("Error marshaling JSON:", err)
-		return
+		return errors.New("Error marshaling JSON")
 	}
 
 	// Send HTTP POST request
 	resp, err := http.Post(batchMessageApiUrl, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Println("Error sending request:", err)
-		return
+		return errors.New("Error sending request")
 	}
 	defer resp.Body.Close()
+
 	mqttMessages = nil
 	log.Println("Response Status:", resp.Status)
+
+	return nil
 }
 
 func getMqttClient(broker, clientId string) (mqtt.Client, error) {
@@ -192,7 +197,7 @@ func getEnvironmentVariables() (string, string, string, string, error) {
 }
 
 func main() {
-	// get env vars
+	// Load env vars
 	broker, clientId, topic, batchMessageApiUrl, err := getEnvironmentVariables()
 	if err != nil {
 		log.Println("Failed to get environment variables:", err)
