@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -130,65 +131,63 @@ func getDatabaseConnection(dbUser, dbPass, dbHost, dbName string) (*sql.DB, erro
 	return db, nil
 }
 
-func getEnvironmentVariables() (string, string, string, string, string) {
+// Helper function to get and validate an environment variable
+func getEnvVar(key string) (string, error) {
+	value, exists := os.LookupEnv(key)
+	if !exists {
+		return "", fmt.Errorf("Error: %s environment variable is not set", key)
+	}
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedValue == "" {
+		return "", fmt.Errorf("Error: %s is empty or contains only spaces", key)
+	}
+	return trimmedValue, nil
+}
 
-	// get env vars
+func getEnvironmentVariables() (string, string, string, string, string, error) {
+
+	// Load env vars
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		return "", "", "", "", "", fmt.Errorf("Error loading .env file: %w", err)
 	}
 
-	serverAddr, exists := os.LookupEnv("SERVER_ADDR")
-	if !exists {
-		log.Fatal("Error: SERVER_ADDR environment variable is not set")
+	serverAddr, err := getEnvVar("SERVER_ADDR")
+	if err != nil {
+		return "", "", "", "", "", err
 	}
-	if strings.TrimSpace(serverAddr) == "" {
-		log.Fatal("Error: TOPIC is empty or contains only spaces")
-	}
-	serverAddr = strings.TrimSpace(serverAddr)
 
-	dbUser, exists := os.LookupEnv("DB_USER")
-	if !exists {
-		log.Fatal("Error: DB_USER environment variable is not set")
+	dbUser, err := getEnvVar("DB_USER")
+	if err != nil {
+		return "", "", "", "", "", err
 	}
-	if strings.TrimSpace(dbUser) == "" {
-		log.Fatal("Error: TOPIC is empty or contains only spaces")
-	}
-	dbUser = strings.TrimSpace(dbUser)
 
-	dbPass, exists := os.LookupEnv("DB_PASSWORD")
-	if !exists {
-		log.Fatal("Error: DB_PASSWORD environment variable is not set")
+	dbPass, err := getEnvVar("DB_PASSWORD")
+	if err != nil {
+		return "", "", "", "", "", err
 	}
-	if strings.TrimSpace(dbPass) == "" {
-		log.Fatal("Error: TOPIC is empty or contains only spaces")
-	}
-	dbPass = strings.TrimSpace(dbPass)
 
-	dbHost, exists := os.LookupEnv("DB_HOST_PORT")
-	if !exists {
-		log.Fatal("Error: DB_HOST_PORT environment variable is not set")
+	dbHost, err := getEnvVar("DB_HOST_PORT")
+	if err != nil {
+		return "", "", "", "", "", err
 	}
-	if strings.TrimSpace(dbHost) == "" {
-		log.Fatal("Error: TOPIC is empty or contains only spaces")
-	}
-	dbHost = strings.TrimSpace(dbHost)
 
-	dbName, exists := os.LookupEnv("DB_NAME")
-	if !exists {
-		log.Fatal("Error: DB_NAME environment variable is not set")
+	dbName, err := getEnvVar("DB_NAME")
+	if err != nil {
+		return "", "", "", "", "", err
 	}
-	if strings.TrimSpace(dbName) == "" {
-		log.Fatal("Error: TOPIC is empty or contains only spaces")
-	}
-	dbName = strings.TrimSpace(dbName)
 
-	return serverAddr, dbUser, dbPass, dbHost, dbName
+	return serverAddr, dbUser, dbPass, dbHost, dbName, nil
 }
 
 func main() {
 
-	serverAddr, dbUser, dbPass, dbHost, dbName := getEnvironmentVariables()
+	// get env vars
+	serverAddr, dbUser, dbPass, dbHost, dbName, err := getEnvironmentVariables()
+	if err != nil {
+		log.Println("Failed to load environment variables:", err)
+		return
+	}
 
 	// Initialize database
 	db, err := getDatabaseConnection(dbUser, dbPass, dbHost, dbName)

@@ -200,7 +200,7 @@ func main() {
 	// Load env vars
 	broker, clientId, topic, batchMessageApiUrl, err := getEnvironmentVariables()
 	if err != nil {
-		log.Println("Failed to get environment variables:", err)
+		log.Println("Failed to load environment variables:", err)
 		return
 	}
 
