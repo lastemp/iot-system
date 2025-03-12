@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"github.com/gammazero/workerpool"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -19,9 +22,14 @@ type mqttMessage struct {
 	Payload string `json:"payload"` // payload
 }
 
+// Worker pool to control concurrency
+var wp = workerpool.New(10) // Limit to 10 concurrent workers
+
+const batchSize = 10 // Insert in batches of 10
+
 // greeting for default page.
 func greeting(c *gin.Context) {
-	c.String(http.StatusOK, "")
+	c.String(http.StatusOK, "Welcome, glad to have you here!")
 }
 
 // postMqttMessage adds mqtt message from JSON received in the request body.
@@ -36,7 +44,8 @@ func postMqttMessage(c *gin.Context) {
 
 	// Save the new mqtt Message.
 	log.Println("new message:", msg)
-	c.IndentedJSON(http.StatusCreated, "")
+
+	c.JSON(http.StatusCreated, gin.H{"status": "Message queued for processing"})
 }
 
 // postMqttBatchMessage adds mqtt message from JSON received in the request body.
@@ -51,10 +60,14 @@ func postMqttBatchMessage(c *gin.Context, db *sql.DB) {
 
 	log.Println("new message:", msgs)
 	if len(msgs) > 0 {
-		// Save the new mqtt messages.
-		go addMessages(msgs, db)
+		// Use worker pool to handle DB inserts
+		wp.Submit(func() {
+			// Save the new mqtt messages.
+			addMessages(msgs, db)
+		})
 	}
-	c.IndentedJSON(http.StatusCreated, "")
+
+	c.JSON(http.StatusCreated, gin.H{"status": "Messages queued for processing"})
 }
 
 func postMqttBatchMessageHandler(db *sql.DB) gin.HandlerFunc {
@@ -63,7 +76,46 @@ func postMqttBatchMessageHandler(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
+// insertBatch inserts a batch of messages into the database
+func insertBatch(batch []mqttMessage, db *sql.DB) {
+	if len(batch) == 0 {
+		return
+	}
+
+	// Use a single transaction for efficiency
+	tx, err := db.Begin()
+	if err != nil {
+		log.Println("Transaction error:", err)
+		return
+	}
+
+	stmt, err := tx.Prepare("insert into iot_messages (topic, payload) values (?, ?)")
+	if err != nil {
+		log.Println("Prepare statement error:", err)
+		tx.Rollback()
+		return
+	}
+	defer stmt.Close()
+
+	for _, msg := range batch {
+		_, err := stmt.Exec(msg.Topic, msg.Payload)
+		if err != nil {
+			log.Println("Batch insert error:", err)
+			tx.Rollback()
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Println("Transaction commit error:", err)
+		return
+	}
+
+	log.Printf("Inserted batch of %d messages\n", len(batch))
+}
+
 // addMessages adds the specified messages to the database
+/*
 func addMessages(msgs []mqttMessage, db *sql.DB) {
 
 	if len(msgs) == 0 {
@@ -86,6 +138,47 @@ func addMessages(msgs []mqttMessage, db *sql.DB) {
 			return
 		}
 	}
+}
+*/
+
+// addMessages adds the specified messages to the database
+func addMessages(msgs []mqttMessage, db *sql.DB) {
+	// This function processes messages in batches of 10 instead of inserting them one-by-one.
+	// This improves performance by reducing the number of database calls.
+
+	/*
+		msgs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+
+		1st iteration: i=0 → batch = [1-10]
+		2nd iteration: i=10 → batch = [11-14]
+
+	*/
+
+	if len(msgs) == 0 {
+		return
+	}
+
+	// sync.WaitGroup ensures the function waits for all goroutines to finish before returning.
+	var wg sync.WaitGroup
+
+	// Iterates through the msgs slice in chunks of batchSize (10 messages at a time).
+	// Handles the last batch, which may contain fewer than 10 messages.
+	for i := 0; i < len(msgs); i += batchSize {
+		end := i + batchSize
+		if end > len(msgs) {
+			end = len(msgs)
+		}
+
+		wg.Add(1) // increments the counter before launching a new goroutine
+
+		// Creates a new goroutine for each batch to insert messages asynchronously.
+		go func(batch []mqttMessage) {
+			defer wg.Done() // defer wg.Done() ensures the counter is decremented when the goroutine finishes
+			insertBatch(batch, db)
+		}(msgs[i:end]) // Passes the batch slice (msgs[i:end]) to insertBatch for database insertion.
+	}
+
+	wg.Wait() //Wait for All Goroutines to Finish
 }
 
 // getDatabaseConnection returns the database connection
@@ -119,12 +212,16 @@ func getDatabaseConnection(dbUser, dbPass, dbHost, dbName string) (*sql.DB, erro
 	// Get a database handle.
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	pingErr := db.Ping()
-	if pingErr != nil {
-		log.Fatal(pingErr)
+	// Set connection pooling settings
+	db.SetMaxOpenConns(25)                 // Max simultaneous open connections
+	db.SetMaxIdleConns(10)                 // Max idle connections
+	db.SetConnMaxLifetime(5 * time.Minute) // Recycle connections after 5 min
+
+	if err := db.Ping(); err != nil {
+		return nil, err
 	}
 
 	log.Println("Connected!")
@@ -185,8 +282,7 @@ func main() {
 	// get env vars
 	serverAddr, dbUser, dbPass, dbHost, dbName, err := getEnvironmentVariables()
 	if err != nil {
-		log.Println("Failed to load environment variables:", err)
-		return
+		log.Fatal("Failed to load environment variables:", err)
 	}
 
 	// Initialize database
