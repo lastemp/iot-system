@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -115,33 +116,6 @@ func insertBatch(batch []mqttMessage, db *sql.DB) {
 }
 
 // addMessages adds the specified messages to the database
-/*
-func addMessages(msgs []mqttMessage, db *sql.DB) {
-
-	if len(msgs) == 0 {
-		return
-	}
-
-	// Prepare an INSERT statement
-	stmt, err := db.Prepare("insert into iot_messages (topic, payload) values (?, ?)")
-	if err != nil {
-		log.Println("insert error:", err.Error())
-		return
-	}
-	defer stmt.Close()
-
-	// Insert each message into the database
-	for _, msg := range msgs {
-		_, err := stmt.Exec(msg.Topic, msg.Payload)
-		if err != nil {
-			log.Println("batch error:", err.Error())
-			return
-		}
-	}
-}
-*/
-
-// addMessages adds the specified messages to the database
 func addMessages(msgs []mqttMessage, db *sql.DB) {
 	// This function processes messages in batches of 10 instead of inserting them one-by-one.
 	// This improves performance by reducing the number of database calls.
@@ -184,19 +158,19 @@ func addMessages(msgs []mqttMessage, db *sql.DB) {
 // getDatabaseConnection returns the database connection
 func getDatabaseConnection(dbUser, dbPass, dbHost, dbName string) (*sql.DB, error) {
 	if strings.TrimSpace(dbUser) == "" {
-		log.Fatal("Error: db user is empty or contains only spaces")
+		return nil, errors.New("Error: db user is empty or contains only spaces")
 	}
 
 	if strings.TrimSpace(dbPass) == "" {
-		log.Fatal("Error: db pass is empty or contains only spaces")
+		return nil, errors.New("Error: db pass is empty or contains only spaces")
 	}
 
 	if strings.TrimSpace(dbHost) == "" {
-		log.Fatal("Error: db host is empty or contains only spaces")
+		return nil, errors.New("Error: db host is empty or contains only spaces")
 	}
 
 	if strings.TrimSpace(dbName) == "" {
-		log.Fatal("Error: db name is empty or contains only spaces")
+		return nil, errors.New("Error: db name is empty or contains only spaces")
 	}
 
 	// Capture connection properties.
@@ -224,7 +198,7 @@ func getDatabaseConnection(dbUser, dbPass, dbHost, dbName string) (*sql.DB, erro
 		return nil, err
 	}
 
-	log.Println("Connected!")
+	log.Println("Database connected successfully!")
 	return db, nil
 }
 
