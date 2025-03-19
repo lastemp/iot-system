@@ -200,8 +200,7 @@ func main() {
 	// Load env vars
 	broker, clientId, topic, batchMessageApiUrl, err := getEnvironmentVariables()
 	if err != nil {
-		log.Println("Failed to load environment variables:", err)
-		return
+		log.Fatal("Failed to load environment variables:", err)
 	}
 
 	// Initialize MQTT client

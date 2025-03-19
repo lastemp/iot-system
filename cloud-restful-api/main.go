@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -37,9 +38,13 @@ func greeting(c *gin.Context) {
 func postMqttMessage(c *gin.Context) {
 	var msg mqttMessage
 
-	// Call BindJSON to bind the received JSON to
-	// msg.
-	if err := c.BindJSON(&msg); err != nil {
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields() // Reject unknown fields
+
+	// Call Decode to bind the received JSON to
+	// msgs.
+	if err := decoder.Decode(&msg); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 		return
 	}
 
@@ -53,20 +58,31 @@ func postMqttMessage(c *gin.Context) {
 func postMqttBatchMessage(c *gin.Context, db *sql.DB) {
 	var msgs []mqttMessage
 
-	// Call BindJSON to bind the received JSON to
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields() // Reject unknown fields
+
+	// Call Decode to bind the received JSON to
 	// msgs.
-	if err := c.BindJSON(&msgs); err != nil {
+	if err := decoder.Decode(&msgs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+
+	if len(msgs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid messages"})
 		return
 	}
 
 	log.Println("new message:", msgs)
-	if len(msgs) > 0 {
-		// Use worker pool to handle DB inserts
-		wp.Submit(func() {
-			// Save the new mqtt messages.
-			addMessages(msgs, db)
-		})
-	}
+
+	// Use worker pool to handle DB inserts
+	wp.Submit(func() {
+		// Save the new mqtt messages.
+		err := addMessages(msgs, db)
+		if err != nil {
+			log.Println(err)
+		}
+	})
 
 	c.JSON(http.StatusCreated, gin.H{"status": "Messages queued for processing"})
 }
@@ -78,45 +94,41 @@ func postMqttBatchMessageHandler(db *sql.DB) gin.HandlerFunc {
 }
 
 // insertBatch inserts a batch of messages into the database
-func insertBatch(batch []mqttMessage, db *sql.DB) {
+func insertBatch(batch []mqttMessage, db *sql.DB) error {
 	if len(batch) == 0 {
-		return
+		return fmt.Errorf("Error: batch of messages has no entries")
 	}
 
 	// Use a single transaction for efficiency
 	tx, err := db.Begin()
 	if err != nil {
-		log.Println("Transaction error:", err)
-		return
+		return fmt.Errorf("Error: Transaction error. %w", err)
 	}
 
 	stmt, err := tx.Prepare("insert into iot_messages (topic, payload) values (?, ?)")
 	if err != nil {
-		log.Println("Prepare statement error:", err)
 		tx.Rollback()
-		return
+		return fmt.Errorf("Error: Prepare statement error. %w", err)
 	}
 	defer stmt.Close()
 
 	for _, msg := range batch {
 		_, err := stmt.Exec(msg.Topic, msg.Payload)
 		if err != nil {
-			log.Println("Batch insert error:", err)
 			tx.Rollback()
-			return
+			return fmt.Errorf("Error: Batch insert error. %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Println("Transaction commit error:", err)
-		return
+		return fmt.Errorf("Error: Transaction commit error. %w", err)
 	}
 
-	log.Printf("Inserted batch of %d messages\n", len(batch))
+	return nil
 }
 
 // addMessages adds the specified messages to the database
-func addMessages(msgs []mqttMessage, db *sql.DB) {
+func addMessages(msgs []mqttMessage, db *sql.DB) error {
 	// This function processes messages in batches of 10 instead of inserting them one-by-one.
 	// This improves performance by reducing the number of database calls.
 
@@ -129,7 +141,7 @@ func addMessages(msgs []mqttMessage, db *sql.DB) {
 	*/
 
 	if len(msgs) == 0 {
-		return
+		return fmt.Errorf("Error: batch of messages has no entries")
 	}
 
 	// sync.WaitGroup ensures the function waits for all goroutines to finish before returning.
@@ -148,11 +160,18 @@ func addMessages(msgs []mqttMessage, db *sql.DB) {
 		// Creates a new goroutine for each batch to insert messages asynchronously.
 		go func(batch []mqttMessage) {
 			defer wg.Done() // defer wg.Done() ensures the counter is decremented when the goroutine finishes
-			insertBatch(batch, db)
+			err := insertBatch(batch, db)
+			if err != nil {
+				log.Println(err)
+			} else {
+				log.Printf("Inserted batch of %d messages\n", len(batch))
+			}
 		}(msgs[i:end]) // Passes the batch slice (msgs[i:end]) to insertBatch for database insertion.
 	}
 
 	wg.Wait() //Wait for All Goroutines to Finish
+
+	return nil
 }
 
 // getDatabaseConnection returns the database connection
